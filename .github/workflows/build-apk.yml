@@ -1,0 +1,82 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android Licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Grant Execute Permission for Gradle Wrapper
+        run: chmod +x gradlew || true
+
+      - name: Build Debug & Release APK
+        run: |
+          ./gradlew assembleDebug --stacktrace
+          # If keystore is configured, build assembleRelease, otherwise assembleDebug
+          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug
+
+      - name: Locate Compiled APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          echo "Found APK at: $APK_PATH"
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-signal-pro-apk
+          path: ${{ steps.find_apk.outputs.apk_path }}
+          retention-days: 30
+
+      - name: Create GitHub Release and Upload APK
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.find_apk.outputs.apk_path }}
+          name: BTC Signal Pro Release ${{ github.ref_name }}
+          body: |
+            ## BTC Signal Pro - Android Release
+            
+            ### Features included in this build:
+            - Real-time BTC/USDT spot ticker via Binance and MEXC public WebSockets.
+            - Order Book Depth (live bids/asks volume ladder).
+            - Real-time Aggregate Trades tape with buyer/seller pressure metrics.
+            - Multi-timeframe OHLCV data pipeline (1m, 5m, 30m).
+            - Quantitative indicator engine: RSI(14), MACD(12,26,9), EMA(9, 21, 50), Bollinger Bands(20, 2).
+            - Probabilistic sentiment score & automated Risk Matrix (Dynamic Support/Resistance, SL, TP1, TP2, TP3).
+            - Direct download link below:
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
